@@ -530,7 +530,7 @@ fn test_init_escrow_initialized_event_includes_bound_refs() {
         &sme,
         &5_000i128,
         &100i64,
-        &0u64,
+        &1_000u64,
         &token,
         &Some(registry.clone()),
         &treasury,
@@ -548,6 +548,7 @@ fn test_init_escrow_initialized_event_includes_bound_refs() {
             funding_token: token,
             treasury,
             registry: Some(registry),
+            has_maturity_lock: true,
         }
         .to_xdr(&env, &contract_id)]
     );
@@ -590,6 +591,7 @@ fn test_init_escrow_initialized_event_registry_none() {
             funding_token: token,
             treasury,
             registry: None,
+            has_maturity_lock: false,
         }
         .to_xdr(&env, &contract_id)]
     );

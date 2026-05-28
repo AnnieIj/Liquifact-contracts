@@ -347,6 +347,8 @@ pub enum EscrowCloseSnapshot {
 pub struct EscrowSummary {
     /// Full escrow snapshot.
     pub escrow: InvoiceEscrow,
+    /// True when `escrow.maturity > 0`; false means settlement has no maturity time lock.
+    pub has_maturity_lock: bool,
     /// Active legal or compliance hold flag.
     pub legal_hold: bool,
     /// The captured funding close snapshot (Option).
@@ -372,6 +374,8 @@ pub struct EscrowInitialized {
     pub treasury: Address,
     /// Optional registry hint; equals [`DataKey::RegistryRef`] (`None` when unset).
     pub registry: Option<Address>,
+    /// False when `escrow.maturity == 0`, which means `settle` has no maturity time lock.
+    pub has_maturity_lock: bool,
 }
 
 #[contractevent]
@@ -660,6 +664,10 @@ impl LiquifactEscrow {
     /// The funding token and treasury addresses are **immutable** after this call; the registry id is
     /// optional metadata for off-chain indexers (not an on-chain authority).
     ///
+    /// `maturity == 0` is an explicit "no maturity lock" configuration: once funded, the SME may
+    /// call [`LiquifactEscrow::settle`] immediately. Positive maturity values are validator-observed
+    /// ledger timestamps and are enforced with an inclusive `ledger.timestamp() >= maturity` check.
+    ///
     /// `invoice_id` must satisfy [`MAX_INVOICE_ID_STRING_LEN`] and charset rules (see
     /// [`validate_invoice_id_string`]).
     ///
@@ -769,6 +777,7 @@ impl LiquifactEscrow {
             funding_token: Self::get_funding_token(env.clone()),
             treasury: Self::get_treasury(env.clone()),
             registry: Self::get_registry_ref(env.clone()),
+            has_maturity_lock: Self::has_maturity_lock(env.clone()),
         }
         .publish(&env);
 
@@ -806,6 +815,16 @@ impl LiquifactEscrow {
     /// proof of registry membership — query the registry contract directly to verify on-chain state.
     pub fn get_registry_ref(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::RegistryRef)
+    }
+
+    /// Return whether this escrow has a configured maturity time lock.
+    ///
+    /// `true` means [`InvoiceEscrow::maturity`] is positive and [`LiquifactEscrow::settle`] requires
+    /// `Env::ledger().timestamp() >= maturity`. `false` means `maturity == 0`: there is no maturity
+    /// gate, so a funded escrow can be settled immediately by the SME, subject to legal-hold and
+    /// status guards.
+    pub fn has_maturity_lock(env: Env) -> bool {
+        Self::get_escrow(env).maturity > 0
     }
 
     /// Move up to `amount` (capped by balance and [`MAX_DUST_SWEEP_AMOUNT`]) of the **funding token**
@@ -948,7 +967,7 @@ impl LiquifactEscrow {
         let funding_close_snapshot_opt = Self::get_funding_close_snapshot(env.clone());
         let unique_funder_count = Self::get_unique_funder_count(env.clone());
         let is_allowlist_active = Self::is_allowlist_active(env.clone());
-        let schema_version = Self::get_version(env);
+        let schema_version = Self::get_version(env.clone());
 
         let funding_close_snapshot = match funding_close_snapshot_opt {
             Some(snap) => EscrowCloseSnapshot::Some(snap),
@@ -957,6 +976,7 @@ impl LiquifactEscrow {
 
         EscrowSummary {
             escrow,
+            has_maturity_lock: Self::has_maturity_lock(env.clone()),
             legal_hold,
             funding_close_snapshot,
             unique_funder_count,
@@ -1635,12 +1655,13 @@ impl LiquifactEscrow {
     /// withdrawn (3) escrows reject the call.
     ///
     /// # Maturity gate
-    /// If [`InvoiceEscrow::maturity`] > 0, settlement is further gated on the ledger timestamp
-    /// reaching `maturity`. A zero maturity means no time gate.
+    /// If [`InvoiceEscrow::maturity`] > 0, settlement is further gated on validator-observed
+    /// ledger time using an inclusive integer-second boundary:
+    /// `Env::ledger().timestamp() >= maturity`.
     ///
-    /// # Errors
-    /// Emits typed [`EscrowError`] codes for legal hold, uninitialized escrow, non-funded state,
-    /// and unreached maturity.
+    /// A zero maturity is intentionally treated as **no maturity lock**. In that configuration a
+    /// funded escrow can settle immediately after SME auth passes, unless another guard such as
+    /// legal hold blocks settlement.
     pub fn settle(env: Env) -> InvoiceEscrow {
         ensure(
             &env,

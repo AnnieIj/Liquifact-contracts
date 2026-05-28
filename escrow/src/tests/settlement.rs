@@ -589,8 +589,6 @@ fn settle_twice_panics() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// `settle` succeeds immediately when `maturity == 0` regardless of ledger time.
-// Body sets maturity=1000 and timestamp to maturity-1; settle panics pre-maturity. No #[should_panic].
-#[ignore = "body sets non-zero maturity and settles before it; panics without #[should_panic]"]
 #[test]
 fn settle_with_maturity_zero_succeeds_immediately() {
     let env = Env::default();
@@ -601,10 +599,52 @@ fn settle_with_maturity_zero_succeeds_immediately() {
     let sme = Address::generate(&env);
     let (token, treasury) = free_addresses(&env);
 
-    let maturity: u64 = 1_000;
     client.init(
         &admin,
         &String::from_str(&env, "INV_MAT_001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &0u64,
+        &token,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    assert!(
+        !client.has_maturity_lock(),
+        "maturity == 0 must be surfaced as no maturity lock"
+    );
+    assert!(!client.get_escrow_summary().has_maturity_lock);
+
+    fund_to_target(&client, &env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1);
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
+    assert_eq!(settled.maturity, 0);
+}
+
+/// `settle` with `maturity > 0` must trap one second before the configured
+/// validator-observed ledger timestamp and must not mutate the funded state.
+#[test]
+fn settle_one_second_before_maturity_traps_and_preserves_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = deploy(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (token, treasury) = free_addresses(&env);
+
+    let maturity: u64 = 20_000;
+    client.init(
+        &admin,
+        &String::from_str(&env, "INV_MAT_003"),
         &sme,
         &TARGET,
         &800i64,
@@ -619,14 +659,30 @@ fn settle_with_maturity_zero_succeeds_immediately() {
     );
 
     fund_to_target(&client, &env);
+    let snapshot_before = client.get_funding_close_snapshot();
 
     env.ledger().with_mut(|l| l.timestamp = maturity - 1);
-    client.settle();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.settle();
+    }));
+
+    assert!(
+        result.is_err(),
+        "settle must trap before the inclusive maturity boundary"
+    );
+    assert_eq!(
+        client.get_escrow().status,
+        1,
+        "pre-maturity settlement attempt must leave escrow funded"
+    );
+    assert_eq!(
+        client.get_funding_close_snapshot(),
+        snapshot_before,
+        "pre-maturity settlement attempt must not mutate snapshot state"
+    );
 }
 
 /// `settle` with `maturity > 0` succeeds at exactly the maturity timestamp.
-// Body activates legal hold before settling; settle panics due to hold. No #[should_panic].
-#[ignore = "body activates legal hold before settle, causing panic without #[should_panic]"]
 #[test]
 fn settle_at_maturity_succeeds() {
     let env = Env::default();
@@ -637,7 +693,7 @@ fn settle_at_maturity_succeeds() {
     let sme = Address::generate(&env);
     let (token, treasury) = free_addresses(&env);
 
-    let maturity: u64 = 1_000;
+    let maturity: u64 = 20_000;
     client.init(
         &admin,
         &String::from_str(&env, "INV_MAT_002"),
@@ -654,9 +710,17 @@ fn settle_at_maturity_succeeds() {
         &None,
     );
 
+    assert!(
+        client.has_maturity_lock(),
+        "positive maturity must be surfaced as an active maturity lock"
+    );
+    assert!(client.get_escrow_summary().has_maturity_lock);
+
     fund_to_target(&client, &env);
-    client.set_legal_hold(&true);
-    client.settle();
+    env.ledger().with_mut(|l| l.timestamp = maturity);
+    let settled = client.settle();
+    assert_eq!(settled.status, 2);
+    assert_eq!(settled.maturity, maturity);
 }
 
 /// `settle` must panic if SME auth is not provided.

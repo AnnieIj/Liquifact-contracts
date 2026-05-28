@@ -1353,6 +1353,7 @@ fn test_get_escrow_summary_happy_path() {
 
     // Verify fields match individual getters
     assert_eq!(summary.escrow, client.get_escrow());
+    assert_eq!(summary.has_maturity_lock, client.has_maturity_lock());
     assert_eq!(summary.legal_hold, client.get_legal_hold());
 
     let expected_snapshot = match client.get_funding_close_snapshot() {
@@ -1368,6 +1369,7 @@ fn test_get_escrow_summary_happy_path() {
     assert_eq!(summary.schema_version, client.get_version());
 
     // Verify default values specifically
+    assert!(summary.has_maturity_lock);
     assert!(!summary.legal_hold);
     assert_eq!(summary.funding_close_snapshot, EscrowCloseSnapshot::None);
     assert_eq!(summary.unique_funder_count, 0);
@@ -1411,6 +1413,7 @@ fn test_get_escrow_summary_after_state_changes() {
 
     // Verify fields match individual getters under state changes
     assert_eq!(summary.escrow, client.get_escrow());
+    assert_eq!(summary.has_maturity_lock, client.has_maturity_lock());
     assert_eq!(summary.legal_hold, client.get_legal_hold());
 
     let expected_snapshot = match client.get_funding_close_snapshot() {
@@ -1426,6 +1429,7 @@ fn test_get_escrow_summary_after_state_changes() {
     assert_eq!(summary.schema_version, client.get_version());
 
     // Verify state-specific values
+    assert!(summary.has_maturity_lock);
     assert!(summary.legal_hold);
     assert!(summary.is_allowlist_active);
     assert_eq!(summary.unique_funder_count, 1);
