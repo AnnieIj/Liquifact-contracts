@@ -1914,6 +1914,8 @@ impl LiquifactEscrow {
         let tier_lock_secs: u64;
 
         if simple_fund {
+            // Non-tiered deposits never carry a commitment lock.
+            tier_lock_secs = 0;
             if prev == 0 {
                 investor_effective_yield_bps = escrow.yield_bps;
                 Self::set_persistent_investor_effective_yield(
@@ -1937,6 +1939,7 @@ impl LiquifactEscrow {
             let (eff, lock) =
                 Self::effective_yield_for_commitment(&env, escrow.yield_bps, committed_lock_secs);
             investor_effective_yield_bps = eff;
+            tier_lock_secs = lock;
             Self::set_persistent_investor_effective_yield(&env, investor.clone(), eff);
             let now = env.ledger().timestamp();
             let claim_nb = if committed_lock_secs == 0 {
